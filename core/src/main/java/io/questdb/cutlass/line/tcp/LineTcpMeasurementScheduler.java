@@ -47,7 +47,6 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriter.Row;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.cutlass.line.tcp.NewLineProtoParser.ProtoEntity;
@@ -64,6 +63,7 @@ import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -483,7 +483,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
                         }
 
-                        int symIndex = tableUpdateDetails.getSymbolIndex(colIndex, floatingCharSink);
+                        int symIndex = tableUpdateDetails.getSymbolIndex(localDetails, colIndex, floatingCharSink);
                         if (symIndex != SymbolTable.VALUE_NOT_FOUND) {
                             bufPos = tmpBufPos;
                             Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_CACHED_TAG);
@@ -594,20 +594,22 @@ class LineTcpMeasurementScheduler implements Closeable {
                             if (TableUtils.isValidColumnName(job.charSink)) {
                                 colIndex = writer.getMetadata().getColumnCount();
                                 writer.addColumn(job.charSink, colType);
-                                tableUpdateDetails.symCacheByColumnIndexLock.writeLock().lock();
-                                try {
-                                    tableUpdateDetails.symCacheByColumnIndex.extendPos(colIndex);
-                                    SymbolCache symCache = tableUpdateDetails.symCacheByColumnIndex.getQuick(colIndex);
-                                    if (colType == ColumnType.SYMBOL && null == symCache) {
-                                        symCache = new SymbolCache();
-                                        tableUpdateDetails.symCacheByColumnIndex.setQuick(colIndex, symCache);
-                                    }
-                                    if (null != symCache) {
-                                        symCache.clear();
-                                    }
-                                } finally {
-                                    tableUpdateDetails.symCacheByColumnIndexLock.writeLock().unlock();
-                                }
+                                // tableUpdateDetails.symCacheByColumnIndexLock.writeLock().lock();
+                                // try {
+                                // tableUpdateDetails.symCacheByColumnIndex.extendPos(colIndex);
+                                // SymbolCache symCache = tableUpdateDetails.symCacheByColumnIndex.getQuick(colIndex);
+                                // if (colType == ColumnType.SYMBOL && null == symCache) {
+                                // symCache = new SymbolCache(cairoConfiguration,
+                                // job.path.of(cairoConfiguration.getRoot()).concat(tableUpdateDetails.tableName), job.charSink,
+                                // colIndex);
+                                // tableUpdateDetails.symCacheByColumnIndex.setQuick(colIndex, symCache);
+                                // }
+                                // if (null != symCache) {
+                                // symCache.clear();
+                                // }
+                                // } finally {
+                                // tableUpdateDetails.symCacheByColumnIndexLock.writeLock().unlock();
+                                // }
                             } else {
                                 throw CairoException.instance(0).put("invalid column name [table=").put(writer.getName())
                                         .put(", columnName=").put(job.charSink).put(']');
@@ -622,20 +624,20 @@ class LineTcpMeasurementScheduler implements Closeable {
 
                     switch (entityType) {
                         case NewLineProtoParser.ENTITY_TYPE_TAG: {
-                            tableUpdateDetails.symCacheByColumnIndexLock.readLock().lock();
-                            try {
-                                SymbolCache symCache = tableUpdateDetails.symCacheByColumnIndex.getQuick(colIndex);
-                                int len = Unsafe.getUnsafe().getInt(bufPos);
-                                bufPos += Integer.BYTES;
-                                long hi = bufPos + 2 * len;
-                                job.floatingCharSink.asCharSequence(bufPos, hi);
-                                int symIndex = writer.getSymbolIndex(colIndex, job.floatingCharSink);
-                                symCache.put(job.floatingCharSink.toString(), symIndex);
-                                row.putSymIndex(colIndex, symIndex);
-                                bufPos = hi;
-                            } finally {
-                                tableUpdateDetails.symCacheByColumnIndexLock.readLock().unlock();
-                            }
+                            // tableUpdateDetails.symCacheByColumnIndexLock.readLock().lock();
+                            // try {
+                            // SymbolCache symCache = tableUpdateDetails.symCacheByColumnIndex.getQuick(colIndex);
+                            int len = Unsafe.getUnsafe().getInt(bufPos);
+                            bufPos += Integer.BYTES;
+                            long hi = bufPos + 2 * len;
+                            job.floatingCharSink.asCharSequence(bufPos, hi);
+                            int symIndex = writer.getSymbolIndex(colIndex, job.floatingCharSink);
+                            // symCache.put(job.floatingCharSink.toString(), symIndex);
+                            row.putSymIndex(colIndex, symIndex);
+                            bufPos = hi;
+                            // } finally {
+                            // tableUpdateDetails.symCacheByColumnIndexLock.readLock().unlock();
+                            // }
                             break;
                         }
 
@@ -738,14 +740,14 @@ class LineTcpMeasurementScheduler implements Closeable {
         });
         private boolean assignedToJob = false;
         private long lastMeasurementReceivedEpochMs = Long.MAX_VALUE;
-        private final ReadWriteLock symCacheByColumnIndexLock = new SimpleReadWriteLock();
-        private final ObjList<SymbolCache> symCacheByColumnIndex;
+        // private final ReadWriteLock symCacheByColumnIndexLock = new SimpleReadWriteLock();
+        // private final ObjList<SymbolCache> symCacheByColumnIndex;
 
         private TableUpdateDetails(String tableName, int threadId) {
             super();
             this.tableName = tableName;
             this.threadId = threadId;
-            this.symCacheByColumnIndex = new ObjList<>();
+            // this.symCacheByColumnIndex = new ObjList<>();
         }
 
         void handleRowAppended() {
@@ -767,7 +769,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             writer.close();
                             writer = null;
                             tableUpdateDetailsByTableName.remove(tableName);
-                            clearSymbolCaches();
+                            // clearSymbolCaches();
                             idleTableUpdateDetailsByTableName.put(tableName, this);
                             version++;
                             lastMeasurementReceivedEpochMs = Long.MAX_VALUE;
@@ -785,25 +787,27 @@ class LineTcpMeasurementScheduler implements Closeable {
         TableWriter getWriter() {
             if (null == writer) {
                 writer = engine.getWriter(securityContext, tableName);
-                symCacheByColumnIndexLock.writeLock().lock();
-                try {
-                    RecordMetadata metaData = writer.getMetadata();
-                    symCacheByColumnIndex.extendPos(metaData.getColumnCount());
-                    for (int n = 0, sz = metaData.getColumnCount(); n < sz; n++) {
-                        SymbolCache symCache = symCacheByColumnIndex.get(n);
-                        if (metaData.getColumnType(n) == ColumnType.SYMBOL) {
-                            if (null == symCache) {
-                                symCache = new SymbolCache();
-                                symCacheByColumnIndex.setQuick(n, symCache);
-                            }
-                        }
-                        if (null != symCache) {
-                            symCache.clear();
-                        }
-                    }
-                } finally {
-                    symCacheByColumnIndexLock.writeLock().unlock();
-                }
+                // symCacheByColumnIndexLock.writeLock().lock();
+                // try {
+                // RecordMetadata metaData = writer.getMetadata();
+                // symCacheByColumnIndex.extendPos(metaData.getColumnCount());
+                // for (int n = 0, sz = metaData.getColumnCount(); n < sz; n++) {
+                // SymbolCache symCache = symCacheByColumnIndex.get(n);
+                // if (metaData.getColumnType(n) == ColumnType.SYMBOL) {
+                // if (null == symCache) {
+                // symCache = new SymbolCache(cairoConfiguration, new Path().of(cairoConfiguration.getRoot()).concat(tableName),
+                // metaData.getColumnName(n),
+                // n);
+                // symCacheByColumnIndex.setQuick(n, symCache);
+                // }
+                // }
+                // if (null != symCache) {
+                // symCache.clear();
+                // }
+                // }
+                // } finally {
+                // symCacheByColumnIndexLock.writeLock().unlock();
+                // }
             }
             return writer;
         }
@@ -843,42 +847,44 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
         }
 
-        int getSymbolIndex(int colIndex, CharSequence symValue) {
-            SymbolCache symCache;
-            symCacheByColumnIndexLock.readLock().lock();
-            try {
-                if (colIndex >= 0 && symCacheByColumnIndex.size() > colIndex) {
-                    symCache = symCacheByColumnIndex.getQuick(colIndex);
-                } else {
-                    return SymbolTable.VALUE_NOT_FOUND;
-                }
-            } finally {
-                symCacheByColumnIndexLock.readLock().unlock();
-            }
-            if (null != symCache) {
-                return symCache.getSymIndex(symValue);
-            }
-            return SymbolTable.VALUE_NOT_FOUND;
+        int getSymbolIndex(ThreadLocalDetails localDetails, int colIndex, CharSequence symValue) {
+            // SymbolCache symCache;
+            // symCacheByColumnIndexLock.readLock().lock();
+            // try {
+            // if (colIndex >= 0 && symCacheByColumnIndex.size() > colIndex) {
+            // symCache = symCacheByColumnIndex.getQuick(colIndex);
+            // } else {
+            // return SymbolTable.VALUE_NOT_FOUND;
+            // }
+            // } finally {
+            // symCacheByColumnIndexLock.readLock().unlock();
+            // }
+            // if (null != symCache) {
+            // return symCache.getSymIndex(symValue);
+            // }
+            // return SymbolTable.VALUE_NOT_FOUND;
+            return localDetails.getSymbolIndex(colIndex, symValue);
         }
 
-        private void clearSymbolCaches() {
-            symCacheByColumnIndexLock.writeLock().lock();
-            try {
-                for (int n = 0, sz = symCacheByColumnIndex.size(); n < sz; n++) {
-                    SymbolCache symCache = symCacheByColumnIndex.get(n);
-                    if (null != symCache) {
-                        symCache.clear();
-                    }
-                }
-            } finally {
-                symCacheByColumnIndexLock.writeLock().unlock();
-            }
-
-        }
+        // private void clearSymbolCaches() {
+        // symCacheByColumnIndexLock.writeLock().lock();
+        // try {
+        // for (int n = 0, sz = symCacheByColumnIndex.size(); n < sz; n++) {
+        // SymbolCache symCache = symCacheByColumnIndex.get(n);
+        // if (null != symCache) {
+        // symCache.clear();
+        // }
+        // }
+        // } finally {
+        // symCacheByColumnIndexLock.writeLock().unlock();
+        // }
+        //
+        // }
 
         private class ThreadLocalDetails {
             private int version = 0;
-            private final CharSequenceIntHashMap columnIndexByName = new CharSequenceIntHashMap();
+            private final ObjIntHashMap<CharSequence> columnIndexByName = new ObjIntHashMap<>();
+            private final ObjList<SymbolCache> symbolCacheByColumnIndex = new ObjList<>();
 
             int getColumnIndex(CharSequence colName) {
                 int colIndex = columnIndexByName.get(colName);
@@ -897,6 +903,25 @@ class LineTcpMeasurementScheduler implements Closeable {
                     }
                 }
                 return colIndex;
+            }
+
+            int getSymbolIndex(int colIndex, CharSequence symValue) {
+                SymbolCache symCache = symbolCacheByColumnIndex.getQuiet(colIndex);
+                if (null == symCache) {
+                    symCache = addSymbolCache(colIndex);
+                }
+                return symCache.getSymIndex(symValue);
+            }
+
+            private SymbolCache addSymbolCache(int colIndex) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                    // TODO
+                    Path path = new Path().of(cairoConfiguration.getRoot()).concat(tableName);
+                    SymbolCache symCache = new SymbolCache(cairoConfiguration, path, reader.getMetadata().getColumnName(colIndex), colIndex);
+                    path.close();
+                    symbolCacheByColumnIndex.extendAndSet(colIndex, symCache);
+                    return symCache;
+                }
             }
         }
     }

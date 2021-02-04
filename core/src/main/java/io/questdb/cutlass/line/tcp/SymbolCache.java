@@ -24,39 +24,46 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import java.util.concurrent.locks.ReadWriteLock;
-
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ReadOnlyMemory;
+import io.questdb.cairo.SymbolMapReaderImpl;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjIntHashMap;
+import io.questdb.std.str.Path;
 
 class SymbolCache {
-    private final ReadWriteLock lock = new SimpleReadWriteLock();
     private final ObjIntHashMap<CharSequence> indexBySym = new ObjIntHashMap<CharSequence>(8, 0.5, SymbolTable.VALUE_NOT_FOUND);
+    private ReadOnlyMemory txMem;
+    private SymbolMapReaderImpl symMapReader;
+    private long transientSymCountOffset;
+
+    SymbolCache(CairoConfiguration configuration, Path path, CharSequence name, int colIndex) {
+        FilesFacade ff = configuration.getFilesFacade();
+        long transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(colIndex);
+        int plen = path.length();
+        txMem = new ReadOnlyMemory(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), ff.getPageSize(), transientSymCountOffset + Integer.BYTES);
+        int symCount = txMem.getInt(transientSymCountOffset);
+        path.trimTo(plen);
+        symMapReader = new SymbolMapReaderImpl(configuration, path, name, symCount);
+    }
 
     int getSymIndex(CharSequence symValue) {
-        lock.readLock().lock();
-        try {
-            return indexBySym.get(symValue);
-        } finally {
-            lock.readLock().unlock();
-        }
-    }
+        int symIndex = indexBySym.get(symValue);
 
-    void put(CharSequence symValue, int symIndex) {
-        lock.writeLock().lock();
-        try {
-            indexBySym.put(symValue, symIndex);
-        } finally {
-            lock.writeLock().unlock();
+        if (SymbolTable.VALUE_NOT_FOUND != symIndex) {
+            return symIndex;
         }
-    }
 
-    void clear() {
-        lock.writeLock().lock();
-        try {
-            indexBySym.clear();
-        } finally {
-            lock.writeLock().unlock();
+        int symCount = txMem.getInt(transientSymCountOffset);
+        symMapReader.updateSymbolCount(symCount);
+        symIndex = symMapReader.keyOf(symValue);
+
+        if (SymbolTable.VALUE_NOT_FOUND != symIndex) {
+            indexBySym.put(symValue.toString(), symIndex);
         }
+
+        return symIndex;
     }
 }
